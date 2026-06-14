@@ -1,5 +1,6 @@
 // Dependency-free PNG icon generator for the PWA.
-// Draws a pop "clock" mark: coral rounded background + white face + hands.
+// Minimal, flat "Instagram-style" icon: squircle with a diagonal pink->yellow
+// gradient and a thin white outline clock. Rendered at 4x and downsampled (AA).
 import { deflateSync } from 'node:zlib'
 import { writeFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
@@ -41,112 +42,106 @@ function encodePNG(size, pixels) {
       raw[dst + 3] = pixels[src + 3]
     }
   }
-  return Buffer.concat([
-    sig,
-    chunk('IHDR', ihdr),
-    chunk('IDAT', deflateSync(raw)),
-    chunk('IEND', Buffer.alloc(0)),
-  ])
+  return Buffer.concat([sig, chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))])
 }
 
-const BG = [255, 243, 176] // baby yellow
-const PINK = [255, 45, 149] // shocking pink
-const PINK_DARK = [196, 20, 122]
-const FACE = [255, 249, 230]
+const PINK = [255, 45, 149] // #FF2D95
+const YELLOW = [255, 210, 63] // #FFD23F
 const WHITE = [255, 255, 255]
 
-const mix = (a, b, t) => [
-  Math.round(a[0] + (b[0] - a[0]) * t),
-  Math.round(a[1] + (b[1] - a[1]) * t),
-  Math.round(a[2] + (b[2] - a[2]) * t),
-]
+const mix = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v))
 
-// Puffy, glossy 3D pink clock on a baby-yellow rounded background.
+// distance from point (px,py) to segment (x1,y1)-(x2,y2)
+function segDist(px, py, x1, y1, x2, y2) {
+  const dx = x2 - x1
+  const dy = y2 - y1
+  const len2 = dx * dx + dy * dy
+  let t = len2 ? ((px - x1) * dx + (py - y1) * dy) / len2 : 0
+  t = clamp(t, 0, 1)
+  return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy))
+}
+
 function draw(size, maskable) {
-  const px = new Uint8Array(size * size * 4)
-  const cx = size / 2
-  const cy = size / 2
-  const corner = size * 0.22
-  const bodyR = size * (maskable ? 0.34 : 0.4)
-  const faceR = bodyR * 0.62
+  const SS = 4 // supersampling factor
+  const W = size * SS
+  const big = new Uint8Array(W * W * 4)
+  const cx = W / 2
+  const cy = W / 2
 
-  const set = (x, y, [r, g, b], a = 255) => {
-    const i = (y * size + x) * 4
-    px[i] = r
-    px[i + 1] = g
-    px[i + 2] = b
-    px[i + 3] = a
+  // squircle (superellipse) shape; maskable fills the whole square
+  const R = (W / 2) * 0.995
+  const N = 4.5
+  const inSquircle = (x, y) =>
+    maskable ? true : Math.pow(Math.abs((x - cx) / R), N) + Math.pow(Math.abs((y - cy) / R), N) <= 1
+
+  // thin outline clock geometry
+  const faceR = W * (maskable ? 0.2 : 0.225)
+  const stroke = W * 0.011 // half-width of the thin line
+  const hourAng = (300 - 90) * (Math.PI / 180)
+  const minAng = (60 - 90) * (Math.PI / 180)
+  const hx = cx + Math.cos(hourAng) * faceR * 0.5
+  const hy = cy + Math.sin(hourAng) * faceR * 0.5
+  const mx = cx + Math.cos(minAng) * faceR * 0.72
+  const my = cy + Math.sin(minAng) * faceR * 0.72
+
+  const set = (x, y, [r, g, b], a) => {
+    const i = (y * W + x) * 4
+    big[i] = Math.round(r)
+    big[i + 1] = Math.round(g)
+    big[i + 2] = Math.round(b)
+    big[i + 3] = a
   }
 
-  const inRounded = (x, y) => {
-    if (maskable) return true
-    const dx = Math.min(x, size - 1 - x)
-    const dy = Math.min(y, size - 1 - y)
-    if (dx >= corner || dy >= corner) return true
-    return (corner - dx) ** 2 + (corner - dy) ** 2 <= corner * corner
-  }
-
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      if (!inRounded(x, y)) {
+  for (let y = 0; y < W; y++) {
+    for (let x = 0; x < W; x++) {
+      if (!inSquircle(x, y)) {
         set(x, y, [0, 0, 0], 0)
         continue
       }
-      set(x, y, BG)
+      // diagonal gradient: top-left pink -> bottom-right yellow
+      const t = clamp((x / W + y / W) / 2, 0, 1)
+      let col = mix(PINK, YELLOW, t)
+
       const d = Math.hypot(x - cx, y - cy)
-      if (d > bodyR) continue
+      const onRing = Math.abs(d - faceR) <= stroke
+      const onHour = segDist(x, y, cx, cy, hx, hy) <= stroke * 0.9
+      const onMin = segDist(x, y, cx, cy, mx, my) <= stroke * 0.85
+      const onDot = d <= stroke * 1.5
+      if (onRing || onHour || onMin || onDot) col = WHITE
 
-      const nx = (x - cx) / bodyR
-      const ny = (y - cy) / bodyR
-
-      if (d > faceR) {
-        // puffy pink body: top-left highlight, bottom-right rim shadow
-        let col = PINK
-        const light = clamp(-(nx + ny) * 0.5 + 0.12, 0, 1)
-        col = mix(col, WHITE, light * 0.55)
-        const edge = d / bodyR
-        if (edge > 0.82) col = mix(col, PINK_DARK, ((edge - 0.82) / 0.18) * 0.8)
-        // glossy specular spot (top-left)
-        const hx = (x - (cx - 0.34 * bodyR)) / (bodyR * 0.3)
-        const hy = (y - (cy - 0.44 * bodyR)) / (bodyR * 0.18)
-        if (hx * hx + hy * hy < 1) col = mix(col, WHITE, 0.55)
-        set(x, y, col)
-      } else {
-        // clock face with gentle top sheen
-        set(x, y, mix(FACE, WHITE, clamp(-ny * 0.25, 0, 0.25)))
-      }
+      set(x, y, col, 255)
     }
   }
 
-  // hands
-  const drawHand = (angleDeg, length, width, color) => {
-    const rad = (angleDeg - 90) * (Math.PI / 180)
-    const ex = cx + Math.cos(rad) * length
-    const ey = cy + Math.sin(rad) * length
-    const steps = Math.ceil(length * 2)
-    for (let s = 0; s <= steps; s++) {
-      const t = s / steps
-      const x = cx + (ex - cx) * t
-      const y = cy + (ey - cy) * t
-      for (let oy = -width; oy <= width; oy++)
-        for (let ox = -width; ox <= width; ox++) {
-          const xx = Math.round(x + ox)
-          const yy = Math.round(y + oy)
-          if (xx >= 0 && yy >= 0 && xx < size && yy < size && inRounded(xx, yy)) set(xx, yy, color)
+  // downsample with premultiplied alpha to avoid dark fringes
+  const out = new Uint8Array(size * size * 4)
+  for (let oy = 0; oy < size; oy++) {
+    for (let ox = 0; ox < size; ox++) {
+      let r = 0,
+        g = 0,
+        b = 0,
+        a = 0
+      for (let sy = 0; sy < SS; sy++) {
+        for (let sx = 0; sx < SS; sx++) {
+          const i = ((oy * SS + sy) * W + (ox * SS + sx)) * 4
+          const al = big[i + 3] / 255
+          r += big[i] * al
+          g += big[i + 1] * al
+          b += big[i + 2] * al
+          a += al
         }
+      }
+      const o = (oy * size + ox) * 4
+      if (a > 0) {
+        out[o] = Math.round(r / a)
+        out[o + 1] = Math.round(g / a)
+        out[o + 2] = Math.round(b / a)
+      }
+      out[o + 3] = Math.round((a / (SS * SS)) * 255)
     }
   }
-  drawHand(300, faceR * 0.5, size * 0.02, PINK) // hour -> 10
-  drawHand(60, faceR * 0.68, size * 0.017, PINK_DARK) // minute -> 2
-
-  // center dot
-  const dot = size * 0.03
-  for (let y = -dot; y <= dot; y++)
-    for (let x = -dot; x <= dot; x++)
-      if (x * x + y * y <= dot * dot) set(Math.round(cx + x), Math.round(cy + y), PINK_DARK)
-
-  return px
+  return out
 }
 
 function out(path, buf) {
@@ -162,21 +157,20 @@ out(pub + 'icon-512.png', encodePNG(512, draw(512, false)))
 out(pub + 'icon-512-maskable.png', encodePNG(512, draw(512, true)))
 out(pub + 'apple-touch-icon.png', encodePNG(180, draw(180, false)))
 
-// favicon.svg (crisp at small sizes) — puffy pink clock on baby yellow
+// favicon.svg — same minimal flat design
 const favicon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <defs>
-    <radialGradient id="p" cx="38%" cy="32%" r="70%">
-      <stop offset="0%" stop-color="#FF9ED2"/>
-      <stop offset="45%" stop-color="#FF2D95"/>
-      <stop offset="100%" stop-color="#D4147A"/>
-    </radialGradient>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FF2D95"/>
+      <stop offset="1" stop-color="#FFD23F"/>
+    </linearGradient>
   </defs>
-  <rect width="64" height="64" rx="14" fill="#FFF3B0"/>
-  <circle cx="32" cy="33" r="23" fill="url(#p)"/>
-  <ellipse cx="24" cy="21" rx="10" ry="6" fill="#fff" opacity="0.45"/>
-  <circle cx="32" cy="33" r="14.5" fill="#FFF9E6"/>
-  <line x1="32" y1="33" x2="24.5" y2="26" stroke="#FF2D95" stroke-width="3" stroke-linecap="round"/>
-  <line x1="32" y1="33" x2="40" y2="36" stroke="#D4147A" stroke-width="2.6" stroke-linecap="round"/>
-  <circle cx="32" cy="33" r="2.4" fill="#D4147A"/>
+  <rect width="64" height="64" rx="16" fill="url(#g)"/>
+  <g fill="none" stroke="#fff" stroke-width="2.3" stroke-linecap="round">
+    <circle cx="32" cy="32" r="14.5"/>
+    <line x1="32" y1="32" x2="25.5" y2="28.5"/>
+    <line x1="32" y1="32" x2="41" y2="27"/>
+  </g>
+  <circle cx="32" cy="32" r="1.8" fill="#fff"/>
 </svg>`
 out(pub + 'favicon.svg', Buffer.from(favicon))
