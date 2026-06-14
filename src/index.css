@@ -9,7 +9,7 @@
     height: 100%;
   }
   body {
-    @apply bg-cream text-ink font-rounded antialiased;
+    @apply bg-babyyellow text-ink font-rounded antialiased;
     margin: 0;
     -webkit-tap-highlight-color: transparent;
     overscroll-behavior-y: none;

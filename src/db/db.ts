@@ -1,20 +1,10 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
-import type { Category, DayData, LabelHistoryItem } from '../types'
-import { SLOTS_PER_DAY } from '../types'
+import type { Category, DayData, LabelHistoryItem, TimeEvent } from '../types'
 
 interface TimeLogDB extends DBSchema {
-  categories: {
-    key: string
-    value: Category
-  }
-  days: {
-    key: string
-    value: DayData
-  }
-  labelHistory: {
-    key: string
-    value: LabelHistoryItem
-  }
+  categories: { key: string; value: Category }
+  days: { key: string; value: DayData }
+  labelHistory: { key: string; value: LabelHistoryItem }
 }
 
 const DB_NAME = 'timelog-db'
@@ -39,6 +29,38 @@ function getDB() {
     })
   }
   return dbPromise
+}
+
+// Old data used { slots:(id|null)[288], notes:{idx:string} }. Convert to events.
+function normalizeDay(raw: any, date: string): DayData {
+  if (raw && Array.isArray(raw.events)) return { date, events: raw.events }
+  if (raw && Array.isArray(raw.slots)) {
+    const events: TimeEvent[] = []
+    const slots: (string | null)[] = raw.slots
+    const notes: Record<number, string> = raw.notes ?? {}
+    let i = 0
+    while (i < slots.length) {
+      const id = slots[i]
+      if (!id) {
+        i++
+        continue
+      }
+      let j = i
+      while (j < slots.length && slots[j] === id) j++
+      let memo = ''
+      for (let k = i; k < j; k++) if (notes[k]) memo = notes[k]
+      events.push({
+        id: `ev_${date}_${i}`,
+        start: i * 5,
+        end: j * 5,
+        categoryId: id,
+        memo,
+      })
+      i = j
+    }
+    return { date, events }
+  }
+  return { date, events: [] }
 }
 
 // ---- Categories ----
@@ -67,20 +89,14 @@ export async function bulkPutCategories(cats: Category[]): Promise<void> {
 
 // ---- Days ----
 export function emptyDay(date: string): DayData {
-  return { date, slots: new Array(SLOTS_PER_DAY).fill(null), notes: {} }
+  return { date, events: [] }
 }
 
 export async function getDay(date: string): Promise<DayData> {
   const db = await getDB()
   const d = await db.get('days', date)
   if (!d) return emptyDay(date)
-  // safety: ensure correct length
-  if (d.slots.length !== SLOTS_PER_DAY) {
-    const slots = new Array(SLOTS_PER_DAY).fill(null)
-    for (let i = 0; i < Math.min(d.slots.length, SLOTS_PER_DAY); i++) slots[i] = d.slots[i]
-    d.slots = slots
-  }
-  return d
+  return normalizeDay(d, date)
 }
 
 export async function putDay(day: DayData): Promise<void> {
@@ -88,15 +104,11 @@ export async function putDay(day: DayData): Promise<void> {
   await db.put('days', day)
 }
 
-export async function getAllDays(): Promise<DayData[]> {
-  const db = await getDB()
-  return db.getAll('days')
-}
-
 export async function getDaysInRange(start: string, end: string): Promise<DayData[]> {
   const db = await getDB()
   const range = IDBKeyRange.bound(start, end)
-  return db.getAll('days', range)
+  const all = await db.getAll('days', range)
+  return all.map((d) => normalizeDay(d, d.date))
 }
 
 // ---- Label history ----
@@ -134,10 +146,10 @@ export async function exportAll(): Promise<ExportBundle> {
     db.getAll('labelHistory'),
   ])
   return {
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
     categories,
-    days,
+    days: days.map((d) => normalizeDay(d, d.date)),
     labelHistory,
   }
 }
@@ -149,7 +161,7 @@ export async function importAll(bundle: ExportBundle): Promise<void> {
   await tx.objectStore('days').clear()
   await tx.objectStore('labelHistory').clear()
   for (const c of bundle.categories ?? []) await tx.objectStore('categories').put(c)
-  for (const d of bundle.days ?? []) await tx.objectStore('days').put(d)
+  for (const d of bundle.days ?? []) await tx.objectStore('days').put(normalizeDay(d, d.date))
   for (const l of bundle.labelHistory ?? []) await tx.objectStore('labelHistory').put(l)
   await tx.done
 }

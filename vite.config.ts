@@ -18,11 +18,11 @@ export default defineConfig(({ command }) => {
         // scope & start_url must live under the subpath on GitHub Pages
         scope: base,
         manifest: {
-          name: 'タイムログ — 1日の時間記録',
-          short_name: 'タイムログ',
+          name: 'Time log',
+          short_name: 'Time log',
           description: '1日の時間の使い方を記録・分析する自分専用アプリ',
-          theme_color: '#FF6B6B',
-          background_color: '#FFFFFF',
+          theme_color: '#FFF3B0',
+          background_color: '#FFF3B0',
           display: 'standalone',
           orientation: 'portrait',
           lang: 'ja',

@@ -45,6 +45,14 @@ export function slotToTime(slot: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
 }
 
+/** minutes from 00:00 -> "HH:MM" (handles 1440 -> 24:00) */
+export function minutesToHM(min: number): string {
+  if (min >= 1440) return '24:00'
+  const h = Math.floor(min / 60)
+  const m = min % 60
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+}
+
 /** minutes -> "Xh Ym" friendly Japanese */
 export function formatDuration(minutes: number): string {
   if (minutes <= 0) return '0分'

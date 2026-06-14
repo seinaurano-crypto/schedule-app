@@ -1,5 +1,5 @@
-export const SLOTS_PER_DAY = 288 // 24h * 12 (5-min slots)
-export const SLOT_MINUTES = 5
+export const MINUTES_PER_DAY = 1440
+export const STEP_MINUTES = 5
 
 export interface Category {
   id: string
@@ -8,10 +8,17 @@ export interface Category {
   order: number
 }
 
+export interface TimeEvent {
+  id: string
+  start: number // minutes from 00:00, multiple of 5 (0..1440)
+  end: number // minutes from 00:00, exclusive, start < end <= 1440
+  categoryId: string | null
+  memo: string
+}
+
 export interface DayData {
   date: string // "YYYY-MM-DD"
-  slots: (string | null)[] // length 288, category id or null
-  notes: Record<number, string> // slot index -> note text
+  events: TimeEvent[]
 }
 
 export interface LabelHistoryItem {
@@ -19,5 +26,5 @@ export interface LabelHistoryItem {
   text: string
   categoryId: string | null
   count: number
-  lastUsed: number // timestamp
+  lastUsed: number
 }

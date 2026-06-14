@@ -9,6 +9,8 @@ export default {
       colors: {
         ink: '#1A1A1A',
         cream: '#FFFDF7',
+        babyyellow: '#FFF3B0',
+        shock: '#FF2D95',
         pop: {
           coral: '#FF6B6B',
           tangerine: '#FF9F45',

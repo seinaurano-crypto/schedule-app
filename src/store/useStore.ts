@@ -1,32 +1,44 @@
 import { create } from 'zustand'
-import type { Category, DayData, LabelHistoryItem } from '../types'
-import { SLOTS_PER_DAY } from '../types'
+import type { Category, DayData, LabelHistoryItem, TimeEvent } from '../types'
 import * as db from '../db/db'
-import { DEFAULT_CATEGORIES } from '../utils/defaults'
 import { todayKey } from '../utils/date'
 
-export type Tool = 'paint' | 'erase'
+const LS_API_KEY = 'timelog-api-key'
+const LS_MODEL = 'timelog-model'
+export const DEFAULT_MODEL = 'claude-sonnet-4-6'
+
+function uid(prefix: string) {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
+}
+
+function sortEvents(events: TimeEvent[]) {
+  return [...events].sort((a, b) => a.start - b.start)
+}
 
 interface StoreState {
   ready: boolean
   categories: Category[]
-  selectedCategoryId: string | null
-  tool: Tool
   currentDate: string
   day: DayData
   labels: LabelHistoryItem[]
+  apiKey: string
+  model: string
 
   init: () => Promise<void>
-  selectCategory: (id: string) => void
-  setTool: (tool: Tool) => void
   setDate: (date: string) => Promise<void>
 
-  paintRange: (start: number, end: number) => Promise<void>
-  setNote: (slot: number, text: string) => Promise<void>
+  addEvent: (e: Omit<TimeEvent, 'id'>) => Promise<void>
+  addEvents: (events: Omit<TimeEvent, 'id'>[]) => Promise<void>
+  updateEvent: (e: TimeEvent) => Promise<void>
+  deleteEvent: (id: string) => Promise<void>
 
-  addCategory: (name: string, color: string) => Promise<void>
+  addCategory: (name: string, color: string) => Promise<Category>
   updateCategory: (cat: Category) => Promise<void>
   removeCategory: (id: string) => Promise<void>
+  reorderCategory: (id: string, dir: -1 | 1) => Promise<void>
+
+  setApiKey: (key: string) => void
+  setModel: (model: string) => void
   reloadLabels: () => Promise<void>
   reloadDay: () => Promise<void>
 }
@@ -34,82 +46,76 @@ interface StoreState {
 export const useStore = create<StoreState>((set, get) => ({
   ready: false,
   categories: [],
-  selectedCategoryId: null,
-  tool: 'paint',
   currentDate: todayKey(),
-  day: { date: todayKey(), slots: new Array(SLOTS_PER_DAY).fill(null), notes: {} },
+  day: { date: todayKey(), events: [] },
   labels: [],
+  apiKey: localStorage.getItem(LS_API_KEY) ?? '',
+  model: localStorage.getItem(LS_MODEL) ?? DEFAULT_MODEL,
 
   init: async () => {
-    let categories = await db.getAllCategories()
-    if (categories.length === 0) {
-      await db.bulkPutCategories(DEFAULT_CATEGORIES)
-      categories = DEFAULT_CATEGORIES
-    }
     const date = todayKey()
-    const day = await db.getDay(date)
-    const labels = await db.getAllLabels()
-    set({
-      ready: true,
-      categories,
-      selectedCategoryId: categories[0]?.id ?? null,
-      currentDate: date,
-      day,
-      labels,
-    })
+    const [categories, day, labels] = await Promise.all([
+      db.getAllCategories(),
+      db.getDay(date),
+      db.getAllLabels(),
+    ])
+    set({ ready: true, categories, currentDate: date, day, labels })
   },
-
-  selectCategory: (id) => set({ selectedCategoryId: id, tool: 'paint' }),
-  setTool: (tool) => set({ tool }),
 
   setDate: async (date) => {
     const day = await db.getDay(date)
     set({ currentDate: date, day })
   },
 
-  paintRange: async (start, end) => {
-    const { tool, selectedCategoryId, day } = get()
-    const lo = Math.max(0, Math.min(start, end))
-    const hi = Math.min(SLOTS_PER_DAY - 1, Math.max(start, end))
-    const slots = day.slots.slice()
-    const notes = { ...day.notes }
-    const value = tool === 'erase' ? null : selectedCategoryId
-    if (tool === 'paint' && !value) return
-    for (let i = lo; i <= hi; i++) {
-      slots[i] = value
-      if (tool === 'erase') delete notes[i]
-    }
-    const newDay = { ...day, slots, notes }
+  addEvent: async (e) => {
+    const { day } = get()
+    const newDay = { ...day, events: sortEvents([...day.events, { ...e, id: uid('ev') }]) }
     set({ day: newDay })
     await db.putDay(newDay)
-  },
-
-  setNote: async (slot, text) => {
-    const { day, slots } = { day: get().day, slots: get().day.slots }
-    const notes = { ...day.notes }
-    const trimmed = text.trim()
-    if (trimmed) notes[slot] = trimmed
-    else delete notes[slot]
-    const newDay = { ...day, notes }
-    set({ day: newDay })
-    await db.putDay(newDay)
-    const catId = slots[slot] ?? null
-    if (trimmed) {
-      await db.recordLabel(trimmed, catId)
+    if (e.memo.trim()) {
+      await db.recordLabel(e.memo, e.categoryId)
       await get().reloadLabels()
     }
   },
 
+  addEvents: async (events) => {
+    if (events.length === 0) return
+    const { day } = get()
+    const withIds = events.map((e) => ({ ...e, id: uid('ev') }))
+    const newDay = { ...day, events: sortEvents([...day.events, ...withIds]) }
+    set({ day: newDay })
+    await db.putDay(newDay)
+    for (const e of events) if (e.memo.trim()) await db.recordLabel(e.memo, e.categoryId)
+    await get().reloadLabels()
+  },
+
+  updateEvent: async (e) => {
+    const { day } = get()
+    const newDay = {
+      ...day,
+      events: sortEvents(day.events.map((ev) => (ev.id === e.id ? e : ev))),
+    }
+    set({ day: newDay })
+    await db.putDay(newDay)
+    if (e.memo.trim()) {
+      await db.recordLabel(e.memo, e.categoryId)
+      await get().reloadLabels()
+    }
+  },
+
+  deleteEvent: async (id) => {
+    const { day } = get()
+    const newDay = { ...day, events: day.events.filter((ev) => ev.id !== id) }
+    set({ day: newDay })
+    await db.putDay(newDay)
+  },
+
   addCategory: async (name, color) => {
     const { categories } = get()
-    const cat: Category = {
-      id: `cat_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      name,
-      color,
-      order: categories.length,
-    }
+    const cat: Category = { id: uid('cat'), name, color, order: categories.length }
     await db.putCategory(cat)
     set({ categories: [...categories, cat] })
+    return cat
   },
 
   updateCategory: async (cat) => {
@@ -119,16 +125,31 @@ export const useStore = create<StoreState>((set, get) => ({
 
   removeCategory: async (id) => {
     await db.deleteCategory(id)
-    const categories = get().categories.filter((c) => c.id !== id)
-    const selectedCategoryId =
-      get().selectedCategoryId === id ? (categories[0]?.id ?? null) : get().selectedCategoryId
-    set({ categories, selectedCategoryId })
+    set({ categories: get().categories.filter((c) => c.id !== id) })
   },
 
-  reloadLabels: async () => {
-    const labels = await db.getAllLabels()
-    set({ labels })
+  reorderCategory: async (id, dir) => {
+    const cats = [...get().categories]
+    const i = cats.findIndex((c) => c.id === id)
+    const j = i + dir
+    if (i < 0 || j < 0 || j >= cats.length) return
+    ;[cats[i], cats[j]] = [cats[j], cats[i]]
+    const reordered = cats.map((c, idx) => ({ ...c, order: idx }))
+    set({ categories: reordered })
+    await db.bulkPutCategories(reordered)
   },
+
+  setApiKey: (key) => {
+    localStorage.setItem(LS_API_KEY, key)
+    set({ apiKey: key })
+  },
+
+  setModel: (model) => {
+    localStorage.setItem(LS_MODEL, model)
+    set({ model })
+  },
+
+  reloadLabels: async () => set({ labels: await db.getAllLabels() }),
 
   reloadDay: async () => {
     const day = await db.getDay(get().currentDate)

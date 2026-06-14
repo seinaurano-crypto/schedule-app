@@ -1,26 +1,31 @@
 import { useState } from 'react'
 import DateNav from '../components/DateNav'
-import CategoryBar from '../components/CategoryBar'
-import Timeline from '../components/Timeline'
+import AiInput from '../components/AiInput'
+import EventList from '../components/EventList'
 import ClockView from '../components/ClockView'
-import NoteEditor from '../components/NoteEditor'
+import EventEditor from '../components/EventEditor'
+import type { TimeEvent } from '../types'
 
-type View = 'timeline' | 'clock'
+type View = 'list' | 'clock'
 
-export default function RecordPage() {
-  const [view, setView] = useState<View>('timeline')
-  const [editSlot, setEditSlot] = useState<number | null>(null)
+interface Props {
+  goToSettings: () => void
+}
+
+export default function RecordPage({ goToSettings }: Props) {
+  const [view, setView] = useState<View>('list')
+  const [editor, setEditor] = useState<{ event: TimeEvent | null } | null>(null)
 
   return (
     <div className="flex flex-col gap-3">
       <DateNav />
 
-      <CategoryBar />
+      <AiInput onGoToSettings={goToSettings} />
 
       {/* view toggle */}
       <div className="flex justify-center">
         <div className="inline-flex bg-black/5 rounded-pill p-1">
-          {(['timeline', 'clock'] as View[]).map((v) => (
+          {(['list', 'clock'] as View[]).map((v) => (
             <button
               key={v}
               onClick={() => setView(v)}
@@ -31,25 +36,36 @@ export default function RecordPage() {
                 boxShadow: view === v ? '0 2px 8px rgba(0,0,0,0.08)' : 'none',
               }}
             >
-              {v === 'timeline' ? '📋 タイムライン' : '🕐 時計'}
+              {v === 'list' ? '📋 リスト' : '🕐 時計'}
             </button>
           ))}
         </div>
       </div>
 
-      <div className="text-center text-xs text-ink/40 -mt-1">
-        カテゴリを選んで、なぞって塗りましょう。塗った所をタップでメモ。
-      </div>
-
-      {view === 'timeline' ? (
-        <div className="pb-2">
-          <Timeline onSlotTap={setEditSlot} />
-        </div>
+      {view === 'list' ? (
+        <EventList onEdit={(e) => setEditor({ event: e })} />
       ) : (
-        <ClockView onSlotTap={setEditSlot} />
+        <ClockView onEventTap={(e) => setEditor({ event: e })} />
       )}
 
-      {editSlot !== null && <NoteEditor slot={editSlot} onClose={() => setEditSlot(null)} />}
+      {/* add button */}
+      <button
+        onClick={() => setEditor({ event: null })}
+        className="pill-btn bg-shock text-white py-3.5 text-base shadow-md sticky bottom-24 self-center px-8"
+      >
+        ＋ 予定を追加
+      </button>
+
+      {editor && (
+        <EventEditor
+          event={editor.event}
+          onClose={() => setEditor(null)}
+          onGoToSettings={() => {
+            setEditor(null)
+            goToSettings()
+          }}
+        />
+      )}
     </div>
   )
 }

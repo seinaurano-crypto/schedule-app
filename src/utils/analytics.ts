@@ -1,5 +1,4 @@
 import type { Category, DayData } from '../types'
-import { SLOT_MINUTES } from '../types'
 import { isWeekend } from './date'
 
 export interface CatTotal {
@@ -9,30 +8,25 @@ export interface CatTotal {
   minutes: number
 }
 
-const UNKNOWN = { id: '__other', name: 'その他', color: '#C9C9C9' }
+const UNKNOWN = { id: '__other', name: '未分類', color: '#C9C9C9' }
 
 function catLookup(categories: Category[]) {
   const map = new Map(categories.map((c) => [c.id, c]))
-  return (id: string) => map.get(id) ?? UNKNOWN
+  return (id: string | null) => (id && map.get(id)) || UNKNOWN
 }
 
 /** total minutes per category across the given days, sorted desc */
 export function totalsByCategory(days: DayData[], categories: Category[]): CatTotal[] {
   const lookup = catLookup(categories)
-  const acc = new Map<string, number>()
-  for (const day of days) {
-    for (const id of day.slots) {
-      if (!id) continue
-      acc.set(id, (acc.get(id) ?? 0) + SLOT_MINUTES)
-    }
-  }
-  // merge unknown ids into "その他"
   const merged = new Map<string, CatTotal>()
-  for (const [id, minutes] of acc) {
-    const cat = lookup(id)
-    const existing = merged.get(cat.id)
-    if (existing) existing.minutes += minutes
-    else merged.set(cat.id, { id: cat.id, name: cat.name, color: cat.color, minutes })
+  for (const day of days) {
+    for (const ev of day.events) {
+      const cat = lookup(ev.categoryId)
+      const minutes = ev.end - ev.start
+      const existing = merged.get(cat.id)
+      if (existing) existing.minutes += minutes
+      else merged.set(cat.id, { id: cat.id, name: cat.name, color: cat.color, minutes })
+    }
   }
   return [...merged.values()].sort((a, b) => b.minutes - a.minutes)
 }
@@ -41,9 +35,9 @@ export function totalMinutes(totals: CatTotal[]): number {
   return totals.reduce((s, t) => s + t.minutes, 0)
 }
 
-/** number of days that have at least one recorded slot */
+/** number of days that have at least one recorded event */
 export function recordedDayCount(days: DayData[]): number {
-  return days.filter((d) => d.slots.some(Boolean)).length
+  return days.filter((d) => d.events.length > 0).length
 }
 
 /** per-day stacked data for trend chart: { date, [catName]: hours } */
@@ -66,10 +60,9 @@ export function dailyTrend(
     const row: TrendRow = { date: key, label: key.slice(5).replace('-', '/') }
     for (const s of seriesTotals) row[s.id] = 0
     if (day) {
-      for (const id of day.slots) {
-        if (!id) continue
-        const cat = lookup(id)
-        row[cat.id] = ((row[cat.id] as number) ?? 0) + SLOT_MINUTES / 60
+      for (const ev of day.events) {
+        const cat = lookup(ev.categoryId)
+        row[cat.id] = ((row[cat.id] as number) ?? 0) + (ev.end - ev.start) / 60
       }
     }
     return row
@@ -91,7 +84,7 @@ export interface WeekdayWeekend {
 }
 
 export function weekdayWeekendSplit(days: DayData[], categories: Category[]): WeekdayWeekend {
-  const recorded = days.filter((d) => d.slots.some(Boolean))
+  const recorded = days.filter((d) => d.events.length > 0)
   const wd = recorded.filter((d) => !isWeekend(d.date))
   const we = recorded.filter((d) => isWeekend(d.date))
   const avg = (group: DayData[]) => {

@@ -176,7 +176,7 @@ export default function AnalyzePage() {
         <>
           {/* summary cards */}
           <div className="grid grid-cols-2 gap-3">
-            <SummaryCard label="合計記録時間" value={formatDuration(total)} color="#FF6B6B" />
+            <SummaryCard label="合計記録時間" value={formatDuration(total)} color="#FF2D95" />
             <SummaryCard label="1日平均" value={formatDuration(Math.round(avgDayMin))} sub={`${recDays}日で割った平均`} color="#36C5D9" />
             <SummaryCard
               label="最も多いカテゴリ"
