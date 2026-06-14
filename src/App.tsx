@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { Suspense, lazy, useEffect, useState } from 'react'
 import { useStore } from './store/useStore'
 import RecordPage from './pages/RecordPage'
-import AnalyzePage from './pages/AnalyzePage'
-import SettingsPage from './pages/SettingsPage'
+
+const AnalyzePage = lazy(() => import('./pages/AnalyzePage'))
+const SettingsPage = lazy(() => import('./pages/SettingsPage'))
 
 type Tab = 'record' | 'analyze' | 'settings'
 
@@ -43,9 +44,11 @@ export default function App() {
 
       {/* content */}
       <main className="flex-1 w-full max-w-2xl mx-auto px-4 py-4 pb-28">
-        {tab === 'record' && <RecordPage />}
-        {tab === 'analyze' && <AnalyzePage />}
-        {tab === 'settings' && <SettingsPage />}
+        <Suspense fallback={<div className="text-center text-ink/40 font-bold py-20">読み込み中…</div>}>
+          {tab === 'record' && <RecordPage />}
+          {tab === 'analyze' && <AnalyzePage />}
+          {tab === 'settings' && <SettingsPage />}
+        </Suspense>
       </main>
 
       {/* bottom nav */}
